@@ -23,6 +23,7 @@ package main
 
 import(
     "fmt"
+    log "github.com/sirupsen/logrus"
 )
 
 func (t * Table) Count() {
@@ -30,25 +31,51 @@ func (t * Table) Count() {
 }
 
 func (t * Table) count(p * Table) {
-    query := fmt.Sprintf("SELECT count(*) AS count FROM %s AS t", t.Name)
-    if p != nil {
-        query = fmt.Sprintf("%s INNER JOIN purge_%s AS p ON %s", query, p.Name, t.Join)
+
+    if len(t.Related) == 0 && t.Script == "" {
+        query := fmt.Sprintf("SELECT count(*) AS count FROM %s AS t", t.Schema.Name)
+        if p != nil {
+            query = fmt.Sprintf("%s INNER JOIN purge_%s AS p ON %s", query, p.Schema.Name, t.Join)
+        }
+        if t.Parent != "" {
+            query = fmt.Sprintf("%s LEFT OUTER JOIN %s AS p ON %s", query, t.Parent, t.Join)
+        }
+        if t.Condition != "" {
+            query = fmt.Sprintf("%s WHERE %s", query, t.Condition)
+        }
+        log.Debug(query)
+        rows, err := t.Conn.Query(query)
+        if err != nil {
+            fmt.Println(query)
+            panic(err)
+        }
+        defer rows.Close()
+        for rows.Next() {
+            rows := ScanRow(rows)
+            fmt.Printf("%-30s: %d\n", t.Schema.Name, rows["count"].(int64))
+        }
+        return
     }
-    if t.Parent != "" {
-        query = fmt.Sprintf("%s LEFT OUTER JOIN %s AS p ON %s", query, t.Parent, t.Join)
+
+
+    populate := t.createPurgeTable(p, false)
+    defer t.dropPurgeTable()
+    var rd int64
+
+    if !populate {
+        rd = t.countPurgeTable()
+    } else {
+        rd = t.populate(p)
     }
-    if t.Condition != "" {
-        query = fmt.Sprintf("%s WHERE %s", query, t.Condition)
+    
+    fmt.Printf("%-30s: %d\n", t.Schema.Name, rd)
+
+    for _, r := range t.Related {
+        r.count(t)
     }
-    rows, err := t.Conn.Query(query)
-    if err != nil {
-        panic(err)
-    }
-    defer rows.Close()
-    for rows.Next() {
-        rows := ScanRow(rows)
-        fmt.Printf("%-30s: %d\n", t.Name, rows["count"].(int64))
-    }
+    return
+
+
 }
 
 

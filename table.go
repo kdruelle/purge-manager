@@ -26,6 +26,7 @@ import (
     "time"
     log "github.com/sirupsen/logrus"
     "database/sql"
+    "github.com/siddontang/go-mysql/schema"
     "github.com/go-sql-driver/mysql"
 )
 
@@ -36,41 +37,76 @@ const(
 
 
 type Table struct {
-    Name             string             `hcl:",key"`
-    Related          []Table            `hcl:"table"`
+    Related          []*Table           `hcl:"table"`
     Condition        string
     Parent          string
     Join            string
     Script          string
-    Schema           string
+    Schema          *schema.Table
     SkipIndexes     bool                `hcl:"skip_indexes"`
     Conn            *sql.DB
 }
 
+func NewTable(tc TableConfig, conn * sql.DB, db string) (* Table) {
+    t := &Table{
+        Conn: conn,
+        Condition: tc.Condition,
+        Parent: tc.Parent,
+        Join: tc.Join,
+        Script: tc.Script,
+        SkipIndexes: tc.SkipIndexes,
+    }
+    s, err := schema.NewTableFromSqlDB(conn, db, tc.Name)
+    if err != nil {
+        return nil
+    }
+    t.Schema = s
+    for _, rtc := range tc.Related {
+        rt := NewTable(rtc, conn, db)
+        t.Related = append(t.Related, rt)
+    }
+    return t
+}
 
 func (t * Table) Purge() {
     t.purge(nil)
 }
 
 func (t * Table) purge(p * Table) {
-    populate := t.createPurgeTable(p)
-    if populate && t.Script != "" {
-        t.populatePurgeScript(p)
-    } 
-    if populate && t.Script == "" {
-        t.populatePurgeTable(p)
+    populate := t.createPurgeTable(p, false)
+    defer t.dropPurgeTable()
+    var rd int64
+    
+    tt := StartTimeTracker()
+
+    if !populate {
+        rd = t.countPurgeTable()
+    } else {
+        rd = t.populate(p)
     }
+
+    if rd == 0 {
+        log.Info(t.Schema.Name, " : nothing to do.")
+        return
+    }
+
+    log.Info(t.Schema.Name, " : ", rd, " records prepared for delete in ", tt.ElapsedHuman(), ".")
+
     for _, r := range t.Related {
-        r.Schema = t.Schema
-        r.Conn   = t.Conn
         r.purge(t)
     }
-    t.deleteData()
-    t.dropPurgeTable()
+    tt = StartTimeTracker()
+    dd := t.deleteData()
+    log.Info(t.Schema.Name, " : ", dd, " records was deleted successfuly in ", tt.ElapsedHuman(), ".")
+    log.Info(t.Schema.Name, " done.")
 }
 
-func (t * Table) createPurgeTable(p * Table) bool {
-    query := fmt.Sprintf("CREATE TABLE purge_%s LIKE %s", t.Name, t.Name)
+func (t * Table) createPurgeTable(p * Table, persistant bool) bool {
+    temporary := "TEMPORARY"
+    if persistant {
+        temporary = ""
+    }
+    query := fmt.Sprintf("CREATE %s TABLE purge_%s LIKE %s", temporary, t.Schema.Name, t.Schema.Name)
     log.Debug(query)
     _, err := t.Conn.Exec(query)
     if err != nil {
@@ -88,14 +124,20 @@ func (t * Table) createPurgeTable(p * Table) bool {
     return true
 }
 
-func (t * Table) populatePurgeTable(p * Table) {
-    tt := StartTimeTracker()
+func (t * Table) populate(p * Table) (int64) {
+    if t.Script != "" {
+        return t.populatePurgeScript(p)
+    }
+    return t.populatePurgeTable(p)
+}
+
+func (t * Table) populatePurgeTable(p * Table) (int64) {
     var offset  int64 = 0
     var ra      int64 = 0
     for {
-        query := fmt.Sprintf("REPLACE INTO purge_%s SELECT t.* FROM %s AS t", t.Name, t.Name)
+        query := fmt.Sprintf("REPLACE INTO purge_%s SELECT t.* FROM %s AS t", t.Schema.Name, t.Schema.Name)
         if p != nil {
-            query = fmt.Sprintf("%s INNER JOIN purge_%s AS p ON %s", query, p.Name, t.Join)
+            query = fmt.Sprintf("%s INNER JOIN purge_%s AS p ON %s", query, p.Schema.Name, t.Join)
         }
         if t.Parent != "" {
             query = fmt.Sprintf("%s LEFT OUTER JOIN %s AS p ON %s", query, t.Parent, t.Join)
@@ -115,10 +157,10 @@ func (t * Table) populatePurgeTable(p * Table) {
         offset += lra
         time.Sleep(5 * time.Millisecond)
     }
-    log.Info(t.Name, " : ", ra, " records prepared for delete in ", tt.ElapsedHuman(), ".")
+    return ra
 }
 
-func (t * Table) populatePurgeScript(p * Table) {
+func (t * Table) populatePurgeScript(p * Table) (int64) {
     var ra int64 = 0
     script := NewScript(t.Script)
     defer script.Close()
@@ -127,7 +169,7 @@ func (t * Table) populatePurgeScript(p * Table) {
 
     for {
         var funcArgs []map[string]interface{}
-        query := fmt.Sprintf("SELECT t.* FROM purge_%s AS t LIMIT %d,%d", p.Name, offset, populateLimit)
+        query := fmt.Sprintf("SELECT t.* FROM purge_%s AS t LIMIT %d,%d", p.Schema.Name, offset, populateLimit)
         log.Debug(query)
         rows, _ := t.Conn.Query(query)
         columns, _ := rows.Columns()
@@ -143,9 +185,15 @@ func (t * Table) populatePurgeScript(p * Table) {
             funcArgs = append(funcArgs, row)
         }
         if count > 0 {
-            s := script.Call(t.Name, funcArgs)
-            log.Debug(fmt.Sprintf("REPLACE INTO purge_%s SELECT * FROM %s WHERE %s", t.Name, t.Name, s))
-            result, err := t.Conn.Exec(fmt.Sprintf("REPLACE INTO purge_%s SELECT * FROM %s WHERE %s", t.Name, t.Name, s))
+            s := script.Call(t.Schema.Name, funcArgs)
+            var logQuery string
+            if len(s) > 100 {
+                logQuery = s[:100] + "..."
+            } else {
+                logQuery = s
+            }
+            log.Debug(fmt.Sprintf("REPLACE INTO purge_%s SELECT * FROM %s WHERE %s", t.Schema.Name, t.Schema.Name, logQuery))
+            result, err := t.Conn.Exec(fmt.Sprintf("REPLACE INTO purge_%s SELECT * FROM %s WHERE %s", t.Schema.Name, t.Schema.Name, s))
             if err != nil {
                 panic(err)
             }
@@ -157,20 +205,34 @@ func (t * Table) populatePurgeScript(p * Table) {
         }
         offset += count
     }
-    log.Info(t.Name, " : ", ra, " records to delete.")
+    return ra
+}
+
+func (t * Table) countPurgeTable() (i int64) {
+    query := fmt.Sprintf("SELECT count(*) AS count FROM purge_%s AS t", t.Schema.Name)
+    rows, err := t.Conn.Query(query)
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+    for rows.Next() {
+        rows := ScanRow(rows)
+        i = rows["count"].(int64)
+    }
+    return
 }
 
 func (t * Table) selectDataToDelete() (data []map[string]interface{}) {
     query := "SELECT "
-    for i, pk := range Schemas[t.Name].PKColumns {
-        query += fmt.Sprintf("%s", Schemas[t.Name].Columns[pk].Name)
-        if i < len(Schemas[t.Name].PKColumns) - 1 {
+    for i, pk := range t.Schema.PKColumns {
+        query += fmt.Sprintf("%s", t.Schema.Columns[pk].Name)
+        if i < len(t.Schema.PKColumns) - 1 {
             query += ", "
         } else {
             query += " "
         }
     }
-    query += fmt.Sprintf("FROM purge_%s LIMIT %d", t.Name, deleteLimit)
+    query += fmt.Sprintf("FROM purge_%s LIMIT %d", t.Schema.Name, deleteLimit)
     log.Debug(query)
     rows, err := t.Conn.Query(query)
     if err != nil {
@@ -183,9 +245,7 @@ func (t * Table) selectDataToDelete() (data []map[string]interface{}) {
     return
 }
 
-func (t * Table) deleteData() {
-    tt := StartTimeTracker()
-  
+func (t * Table) deleteData() (int64) {
     var countGlobal int64 = 0
     for {
 
@@ -224,19 +284,19 @@ func (t * Table) deleteData() {
         } else {
             logQuery = whereQuery
         }
-        log.Debug(fmt.Sprintf("DELETE FROM %s WHERE %s", t.Name, logQuery))
+        log.Debug(fmt.Sprintf("DELETE FROM %s WHERE %s", t.Schema.Name, logQuery))
 
-        if args.Soft {
+        if soft {
             break
         }
 
-        result, err := t.Conn.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s", t.Name, whereQuery))
+        result, err := t.Conn.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s", t.Schema.Name, whereQuery))
         if err != nil {
             panic(err)
         }
         c, _ := result.RowsAffected()
         countGlobal += c
-        result, err = t.Conn.Exec(fmt.Sprintf("DELETE FROM purge_%s WHERE %s", t.Name, whereQuery))
+        result, err = t.Conn.Exec(fmt.Sprintf("DELETE FROM purge_%s WHERE %s", t.Schema.Name, whereQuery))
         if err != nil {
             panic(err)
         }
@@ -246,18 +306,17 @@ func (t * Table) deleteData() {
         }
         time.Sleep(5 * time.Millisecond)
     }
-    log.Info(t.Name, " : ", countGlobal, " records was deleted successfuly in ", tt.ElapsedHuman(), ".")
+    return countGlobal
 }
 
 func (t * Table) dropPurgeTable() {
-    query := fmt.Sprintf("DROP TABLE purge_%s", t.Name)
+    query := fmt.Sprintf("DROP TABLE purge_%s", t.Schema.Name)
     log.Debug(query)
-    if !args.Soft {
+    if !soft {
         _, err := t.Conn.Exec(query)
         if err != nil {
             panic(err)
         }
     }
-    log.Info(t.Name, " done.")
 }
 

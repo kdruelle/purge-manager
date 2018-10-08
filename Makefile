@@ -20,12 +20,12 @@
 ################################################################################
 
 
-VERSION="0.1.0"
-BUILDTIME="$(shell date +'%Y-%m-%d')"
+VERSION=$(shell git describe --tags | sed 's/v//g')
+BUILDTIME=$(shell LANG=en_US.UTF-8; date +'%d %b %Y')
 
 
 local:
-	go build -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILDTIME}"
+	go build -ldflags '-X "main.version=${VERSION}" -X "main.buildTime=${BUILDTIME}"'
 
 releases:
 	export GOPATH="$(shell go env GOPATH)"; \

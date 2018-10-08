@@ -31,7 +31,7 @@ import(
 )
 
 func initLog() {
-    if !args.Verbose && !args.Debug {
+    if !verbose && !debug {
         log.SetOutput(ioutil.Discard)
     }
 
@@ -41,7 +41,7 @@ func initLog() {
     }
     log.AddHook(hook)
 
-    if args.Debug {
+    if debug {
         log.SetLevel(log.DebugLevel)
     }
 }

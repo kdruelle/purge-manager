@@ -29,11 +29,11 @@ import(
 )
 
 func initLog() {
-    if !args.Verbose && !args.Debug {
+    if !verbose && !debug {
         log.SetOutput(ioutil.Discard)
     }
 
-    if args.Debug {
+    if debug {
         log.SetLevel(log.DebugLevel)
     }
 }

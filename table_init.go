@@ -22,32 +22,16 @@
 package main
 
 import (
-    "github.com/siddontang/go-mysql/schema"
     _ "github.com/go-sql-driver/mysql"
 )
 
-var Schemas map[string]*schema.Table
 
 func (t* Table) Init() (error) {
-    if Schemas == nil {
-        Schemas = make(map[string]*schema.Table)
-    }
     return t.init(nil)
 }
 
 func (t * Table) init(p * Table) (error){
-
-    if p != nil {
-        t.Schema = p.Schema
-        t.Conn   = p.Conn
-    }
-    schema, err := schema.NewTableFromSqlDB(t.Conn, t.Schema, t.Name)
-    if err != nil {
-        return err
-    }
-
-    Schemas[t.Name] = schema
-
+    var err error
     for i, _ := range t.Related {
         err = t.Related[i].init(t)
         if err != nil {

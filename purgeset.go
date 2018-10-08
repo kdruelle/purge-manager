@@ -26,53 +26,66 @@ import (
     "database/sql"
     "github.com/go-sql-driver/mysql"
     //_ "github.com/siddontang/go-mysql/driver"
-)
 
-type DatabaseConfig struct {
-    Host        string
-    User        string
-    Password    string
-    Schema      string
-    Dsn         string
-}
+    //"fmt"
+)
 
 type PurgeSet struct {
     Name            string              `hcl:",key"`
-    Table           []Table             `hcl:"table"`
-    Database        DatabaseConfig
+    Table           []*Table             `hcl:"table"`
+    Conn            *sql.DB
 }
 
-
-
-func (p * PurgeSet) Start() {
-
+func NewPurgeSet(c PurgeSetConfig) (* PurgeSet) {
+    p := &PurgeSet{
+        Name: c.Name,
+    }
+    
     config := mysql.NewConfig()
 
-    config.User     = p.Database.User
-    config.Passwd   = p.Database.Password
+    config.User     = c.Database.User
+    config.Passwd   = c.Database.Password
     config.Net      = "tcp"
-    config.Addr     = p.Database.Host
-    config.DBName   = p.Database.Schema
+    config.Addr     = c.Database.Host
+    config.DBName   = c.Database.Schema
     config.Timeout  = 20 * time.Second
 
 
     conn, err := sql.Open("mysql", config.FormatDSN())
     exitOnError(err)
-    defer conn.Close()
+    p.Conn = conn
+    for _, tc := range c.Table {
+        t := NewTable(tc, conn, c.Database.Schema)
+        p.Table = append(p.Table, t)
+    }
+    return p
+}
 
+func (p * PurgeSet) init() {
     for i, _ := range p.Table {
-        p.Table[i].Conn   = conn
-        p.Table[i].Schema = p.Database.Schema
-        err = p.Table[i].Init()
+        err := p.Table[i].Init()
         exitOnError(err)
     }
+}
+
+
+func (p * PurgeSet) Start() {
+
+    p.init()
+    defer p.Conn.Close()
+
     for _, table := range p.Table {
-        if args.Count {
-            table.Count()
-            continue
-        }
         table.Purge()
     }
 }
+
+func (p * PurgeSet) Count() {
+    p.init()
+    defer p.Conn.Close()
+    for _, table := range p.Table {
+        table.Count()
+    }
+}
+
 
 

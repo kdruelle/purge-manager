@@ -27,18 +27,45 @@ import (
 )
 
 type Config struct {
-    Purges  []PurgeSet     `hcl:"purge"`
+    Purges  []PurgeSetConfig     `hcl:"purge"`
 }
 
-func ParseConfig() (*Config, error) {
-    b, err := ioutil.ReadFile(args.Config)
+type DatabaseConfig struct {
+    Host        string
+    User        string
+    Password    string
+    Schema      string
+    Dsn         string
+}
+
+type PurgeSetConfig struct {
+    Name       string              `hcl:",key"`
+    Table      []TableConfig       `hcl:"table"`
+    Cron       string
+    Database   DatabaseConfig
+}
+
+type TableConfig struct {
+    Name             string             `hcl:",key"`
+    Related          []TableConfig      `hcl:"table"`
+    Condition        string
+    Parent          string
+    Join            string
+    Script          string
+    Schema           string
+    SkipIndexes     bool                `hcl:"skip_indexes"`
+}
+
+var config Config
+
+func ParseConfig() (error) {
+    b, err := ioutil.ReadFile(configFile)
     if err != nil {
-        return nil, err
+        return err
     }
 
-    config := &Config{}
-    err = hcl.Unmarshal(b, config)
-    return config, err
+    err = hcl.Unmarshal(b, &config)
+    return err
 }
 
 

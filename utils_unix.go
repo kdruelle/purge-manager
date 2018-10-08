@@ -1,3 +1,5 @@
+// +build !windows
+
 /******************************************************************************
 ** This file is part of purge-manager.
 **
@@ -21,78 +23,24 @@
 package main
 
 import(
-    "time"
-    "fmt"
     "os"
-    "errors"
+    "time"
     "syscall"
-    log "github.com/sirupsen/logrus"
     "github.com/mitchellh/go-ps"
 )
 
-type TimeTracker struct {
-    start   time.Time
-}
-
-func StartTimeTracker() (*TimeTracker){
-    t := &TimeTracker{
-        start: time.Now(),
-    }
-    return t
-}
-
-func (t * TimeTracker) Elapsed() (time.Duration) {
-    return time.Since(t.start)
-}
-
-func (t * TimeTracker) ElapsedHuman() (string) {
-    return t.Elapsed().String()
-}
-
-func logTimeTrack(start time.Time, name string) {
-    elapsed := time.Since(start)
-    log.Printf("%s took %s", name, elapsed)
-}
-
-
-func exitOnError(e error) {
-    if e == nil {
-        return
-    }
-    if !verbose && !debug {
-        fmt.Fprintln(os.Stderr, e)
-    }
-
-    log.Error(e)
-    os.Exit(1)
-}
-
-
-func IsPidActive(pid int) (bool, error) {
-    if pid <= 0 {
-        return false, errors.New("process id error.")
-    }
-    p, err := os.FindProcess(pid)
-    if err != nil {
-        return false, err
-    }
-
-    if err := p.Signal(os.Signal(syscall.Signal(0))); err != nil {
-        return false, err
-    }
-
-    return true, nil
-}
-
-
-func IsProcessRunning() bool {
+func StopProcess() {
     currentProcess, _ := ps.FindProcess(os.Getpid())
     processes, _ := ps.Processes()
     for _, p := range processes {
         if p.Pid() != currentProcess.Pid() && p.Executable() == currentProcess.Executable() {
-            return true
+            syscall.Kill(p.Pid(), syscall.SIGINT)
+            active, _ := IsPidActive(p.Pid())
+            for active {
+                time.Sleep(time.Second)
+                active, _ = IsPidActive(p.Pid())
+            }
         }
     }
-    return false
 }
 
