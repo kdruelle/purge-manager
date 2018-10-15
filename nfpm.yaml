@@ -1,0 +1,20 @@
+# nfpm example config file
+name: "purge-manager"
+arch: "386"
+platform: "linux"
+version: "${VERSION}"
+section: "default"
+priority: "extra"
+replaces:
+- purge-manager
+provides:
+- purge-manager
+depends:
+maintainer: "Kevin Druelle <kevin@druelle.info>"
+description: |
+    Purge system
+homepage: "https://github.com/kdruelle/purge-manager"
+license: "GPLv3"
+bindir: "/usr/local/bin"
+files:
+    ./bin/purge-manager-v0.1.0-1-g073ab35-linux-386.bin: "/usr/local/bin/purge-manager"

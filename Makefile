@@ -20,8 +20,81 @@
 ################################################################################
 
 
-VERSION=$(shell git describe --tags | sed 's/v//g')
+VERSION=$(shell git describe --tags)
 BUILDTIME=$(shell LANG=en_US.UTF-8; date +'%d %b %Y')
+
+TARGETS="linux/amd64,linux/386,darwin/amd64,darwin/386,windows/amd64,windows/386"
+
+BIN = linux-amd64.bin \
+	  windows-386.bin \
+	  linux-386.bin \
+	  darwin-amd64.bin \
+	  darwin-386.bin \
+	  windows-amd64.bin 
+
+ARTIFACTS = linux-amd64.zip \
+			linux-amd64.deb \
+			linux-386.zip \
+			linux-386.deb \
+			darwin-amd64.zip \
+			darwin-386.zip \
+			windows-amd64.zip \
+			windows-386.zip
+
+SRC = $(wildcard *.go)
+
+DIST_DIR = dist
+BIN_DIR  = bin
+
+BINTARGETS = $(addprefix ${BIN_DIR}/purge-manager-${VERSION}-, ${BIN})
+
+RELEASES = $(addprefix ${DIST_DIR}/purge-manager-${VERSION}-, ${ARTIFACTS})
+
+.PHONY: all
+all: $(BINTARGETS)
+
+ci: $(RELEASES)
+
+$(BINTARGETS) : $(SRC)
+	$(eval OS   = $(shell echo $@ | sed -E 's/.*-([a-z]+)-[a-z0-9]+\.bin(\.exe)?/\1/g'))
+	$(eval ARCH = $(shell echo $@ | sed -E 's/.*-([a-z0-9]+)\.bin(\.exe)?/\1/g'))
+	@mkdir -p build
+	@mkdir -p $(BIN_DIR)
+	@printf "building %s/%s.... " ${OS} ${ARCH}
+	@export GOPATH="$(shell go env GOPATH)"; \
+		xgo -targets "${OS}/${ARCH}" -ldflags '-s -w -X "main.version=${VERSION}" -X "main.buildTime=${BUILDTIME}"' -dest ./build -out purge-manager-${VERSION} ./ > /dev/null
+	@find ./build -name "*-${OS}*${ARCH}*" | sed -E 'p;s/${OS}-.*/${OS}-${ARCH}.bin/g; s/build/bin/g' | xargs -n2 cp
+	@printf "done.\n"
+
+$(filter %.zip, $(RELEASES)) : dist/%.zip : bin/%.bin
+	@mkdir -p dist
+	@printf "creating %s.... " $(notdir $@)
+	@if [[ "$<" =~ "windows" ]]; then \
+		cp $< dist/purge-manager.exe ; \
+		cd dist && zip $(notdir $@) purge-manager.exe > /dev/null && rm purge-manager.exe && cd ../ ; \
+	else \
+		cp $< dist/purge-manager ; \
+		cd dist && zip $(notdir $@) purge-manager > /dev/null && rm purge-manager && cd ../ ; \
+	fi
+	@printf "done.\n"
+
+$(filter %.deb, $(RELEASES)) : dist/%.deb : bin/%.bin
+	$(eval OS = $(shell uname))
+	@mkdir -p dist
+	@printf "creating %s.... " $(notdir $@)
+	@if [[ "${OS}" == "Darwin" ]]; then \
+		export VERSION=${VERSION}; \
+		sed -i '' 's#.*/usr/local/bin/purge-manager.*#    ./$<: "/usr/local/bin/purge-manager"#g' nfpm.yaml ; \
+		sed -i '' 's#.*arch.*#arch: "$(shell echo $< | sed -E 's/.*-([a-z0-9]+).bin$$/\1/g')"#g' nfpm.yaml ; \
+		nfpm pkg -t $@ > /dev/null ; \
+	else \
+		export VERSION=${VERSION}; \
+		sed -i 's#.*/usr/local/bin/purge-manager.*#    ./$<: "/usr/local/bin/purge-manager"#g' nfpm.yaml ; \
+		sed -i 's#.*arch.*#arch: "$(shell echo $< | sed -E 's/.*-([a-z0-9]+).bin$$/\1/g')"#g' nfpm.yaml ; \
+		nfpm pkg -t $@ > /dev/null ; \
+	fi
+	@printf "done."
+
 
 
 local:
