@@ -50,6 +50,8 @@ BINTARGETS = $(addprefix ${BIN_DIR}/purge-manager-${VERSION}-, ${BIN})
 
 RELEASES = $(addprefix ${DIST_DIR}/purge-manager-${VERSION}-, ${ARTIFACTS})
 
+SHELL := /bin/bash
+
 .PHONY: all
 all: $(BINTARGETS)
 
