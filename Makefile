@@ -100,7 +100,7 @@ $(filter %.deb, $(RELEASES)) : dist/%.deb : bin/%.bin
 
 
 local:
-	go build -ldflags '-X "main.version=${VERSION}" -X "main.buildTime=${BUILDTIME}"'
+	go build -ldflags '-X "purge-manager/command.Version=${VERSION}" -X "purge-manager/command.BuildTime=${BUILDTIME}"'
 
 releases:
 	export GOPATH="$(shell go env GOPATH)"; \

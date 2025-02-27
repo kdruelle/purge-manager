@@ -1,6 +1,5 @@
-// +build !windows
-
 /******************************************************************************
+**
 ** This file is part of purge-manager.
 **
 ** (C) 2011 Kevin Druelle <kevin@druelle.info>
@@ -9,38 +8,67 @@
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This software is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this software.  If not, see <http://www.gnu.org/licenses/>.
-** 
+**
 ******************************************************************************/
 
-package main
+package config
 
-import(
-    "os"
-    "time"
-    "syscall"
-    "github.com/mitchellh/go-ps"
+import (
+	"os"
+
+	"github.com/hashicorp/hcl"
 )
 
-func StopProcess() {
-    currentProcess, _ := ps.FindProcess(os.Getpid())
-    processes, _ := ps.Processes()
-    for _, p := range processes {
-        if p.Pid() != currentProcess.Pid() && p.Executable() == currentProcess.Executable() {
-            syscall.Kill(p.Pid(), syscall.SIGINT)
-            active, _ := IsPidActive(p.Pid())
-            for active {
-                time.Sleep(time.Second)
-                active, _ = IsPidActive(p.Pid())
-            }
-        }
-    }
+type Config struct {
+	Purges []PurgeSetConfig `hcl:"purge"`
 }
 
+type DatabaseConfig struct {
+	Host     string
+	User     string
+	Password string
+	Schema   string
+	Dsn      string
+}
+
+type PurgeSetConfig struct {
+	Name     string        `hcl:",key"`
+	Table    []TableConfig `hcl:"table"`
+	Cron     string
+	Database DatabaseConfig
+}
+
+type TableConfig struct {
+	Name        string        `hcl:",key"`
+	Related     []TableConfig `hcl:"table"`
+	Condition   string
+	Parent      string
+	Join        string
+	Script      string
+	Schema      string
+	SkipIndexes bool `hcl:"skip_indexes"`
+}
+
+var config Config
+
+func ParseConfig(configFile string) error {
+	b, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+
+	err = hcl.Unmarshal(b, &config)
+	return err
+}
+
+func Purges() []PurgeSetConfig {
+	return config.Purges
+}
